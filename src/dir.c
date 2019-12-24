@@ -732,7 +732,7 @@ dir_contents_file_exists_p (struct directory_contents *dir,
 #else
           df->name = strcache_add_len (d->d_name, len);
 #endif
-#ifdef _DIRENT_HAVE_D_TYPE
+#ifdef HAVE_STRUCT_DIRENT_D_TYPE
           df->type = d->d_type;
 #endif
           df->length = len;
@@ -1245,7 +1245,7 @@ read_dirstream (__ptr_t stream)
 #ifdef _DIRENT_HAVE_D_NAMLEN
           d->d_namlen = len - 1;
 #endif
-#ifdef _DIRENT_HAVE_D_TYPE
+#ifdef HAVE_STRUCT_DIRENT_D_TYPE
           d->d_type = df->type;
 #endif
           memcpy (d->d_name, df->name, len);
@@ -1332,6 +1332,7 @@ local_lstat (const char *path, struct stat *buf)
 void
 dir_setup_glob (glob_t *gl)
 {
+  gl->gl_offs = 0;
   gl->gl_opendir = open_dirstream;
   gl->gl_readdir = read_dirstream;
   gl->gl_closedir = free;

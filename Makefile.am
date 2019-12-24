@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU General Public License along with
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
-AUTOMAKE_OPTIONS = dist-bzip2 silent-rules std-options subdir-objects nostdinc
+AUTOMAKE_OPTIONS = dist-lzip silent-rules std-options subdir-objects nostdinc
 ACLOCAL_AMFLAGS = -I m4
 
 MAKE_HOST =	@MAKE_HOST@
@@ -94,10 +94,11 @@ m4_FILES =	m4/gnulib-cache.m4
 test_FILES =	tests/run_make_tests tests/run_make_tests.bat \
 		tests/run_make_tests.pl tests/test_driver.pl \
 		tests/config-flags.pm.in tests/config_flags_pm.com \
-		tests/mkshadow tests/jhelp.pl tests/guile.supp tests/README
+		tests/config-flags.pm.W32 \
+		tests/mkshadow tests/thelp.pl tests/guile.supp tests/README
 # test/scripts are added via dist-hook below.
 
-EXTRA_DIST =	ChangeLog README build.sh.in $(man_MANS) \
+EXTRA_DIST =	ChangeLog README build.sh build.cfg.in $(man_MANS) \
 		README.customs README.OS2 \
 		README.Amiga SCOPTIONS src/config.ami \
 		README.DOS builddos.bat src/configh.dos \
@@ -106,11 +107,6 @@ EXTRA_DIST =	ChangeLog README build.sh.in $(man_MANS) \
 		vms_export_symbol_test.com \
 		src/gmk-default.scm src/gmk-default.h \
 		$(mk_FILES) $(m4_FILES) $(test_FILES)
-
-
-# This is built during configure, but behind configure's back
-
-DISTCLEANFILES = build.sh
 
 # --------------- Generate the Guile default module content
 
@@ -165,8 +161,8 @@ check-regression: tests/config-flags.pm
 		     rm -f tests/$$f; ln -s ../srctests/$$f tests; \
 		   done; fi ;; \
 	    esac; \
-	    echo "cd tests && $(PERL) ./run_make_tests.pl -srcdir $(abs_top_srcdir) -make ../make$(EXEEXT) $(MAKETESTFLAGS)"; \
-	    cd tests && $(PERL) ./run_make_tests.pl -srcdir '$(abs_top_srcdir)' -make '../make$(EXEEXT)' $(MAKETESTFLAGS); \
+	    echo "cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir $(abs_top_srcdir) -make ../make$(EXEEXT) $(MAKETESTFLAGS)"; \
+	    cd tests && $(PERL) $(PERLFLAGS) ./run_make_tests.pl -srcdir '$(abs_top_srcdir)' -make '../make$(EXEEXT)' $(MAKETESTFLAGS); \
 	  else \
 	    echo "Can't find a working Perl ($(PERL)); the test suite requires Perl."; \
 	  fi; \

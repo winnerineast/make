@@ -40,7 +40,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include <rmsdef.h>
 
 /* This symbol should be present in lbrdef.h. */
-#ifndef LBR$_HDRTRUNC
+#if !defined LBR$_HDRTRUNC
 #pragma extern_model save
 #pragma extern_model globalvalue
 extern unsigned int LBR$_HDRTRUNC;
@@ -703,7 +703,7 @@ ar_scan (const char *archive, ar_member_func_t function, const void *arg)
         }
 
 #ifndef M_XENIX
-        sscanf (TOCHAR (member_header.ar_mode), "%o", &eltmode);
+        sscanf (TOCHAR (member_header.ar_mode), "%8o", &eltmode);
         eltsize = atol (TOCHAR (member_header.ar_size));
 #else   /* Xenix.  */
         eltmode = (unsigned short int) member_header.ar_mode;
@@ -909,7 +909,7 @@ ar_member_touch (const char *arname, const char *memname)
   for (ui = 0; ui < sizeof ar_hdr.ar_date; ui++)
     ar_hdr.ar_date[ui] = ' ';
   sprintf (TOCHAR (ar_hdr.ar_date), "%lu", (long unsigned) statbuf.st_mtime);
-  ar_hdr.ar_date[strlen (ar_hdr.ar_date)] = ' ';
+  ar_hdr.ar_date[strlen ((char *) ar_hdr.ar_date)] = ' ';
 #else
   ar_hdr.ar_date = statbuf.st_mtime;
 #endif

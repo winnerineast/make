@@ -26,13 +26,18 @@ GNUWEBDIR ?= $(SRCROOTDIR)/gnu-www
 # Where to put the CVS checkout of the GNU make web repository
 MAKEWEBDIR ?= $(SRCROOTDIR)/make/make-web
 
+# Enable Perl warnings for the test suite
+PERLFLAGS := -w
+
 # We like mondo-warnings!
 # Also force comments to be preserved.  This helps when using ccache, in
 # combination with GCC 7's implicit-fallthrough warning.
-AM_CFLAGS += -C -Wall -Wextra -Werror -Wwrite-strings -Wshadow \
+MAKE_CFLAGS := -C -Wall -Wextra -Werror -Wwrite-strings -Wshadow \
 	-Wdeclaration-after-statement -Wbad-function-cast -Wformat-security \
 	-Wtype-limits -Wunused-but-set-parameter -Wlogical-op -Wpointer-arith \
 	-Wignored-qualifiers -Wformat-signedness -Wduplicated-cond
+
+AM_CFLAGS += $(MAKE_CFLAGS)
 
 # Unfortunately the Guile headers are sometimes broken.  Convince GCC
 # to treat them as system headers so warnings are ignored.
@@ -82,16 +87,6 @@ Basic.mk: Basic.mk.template .dep_segment Makefile
 	    -e 's@$$(SRCDIR)/lib/unistd.h@@g' \
 	  $(word 2,$^) >>$@
 	chmod a-w $@
-
-# Construct build.sh.in
-#
-build.sh.in: build.template Makefile
-	rm -f $@
-	sed -e 's@%objs%@$(patsubst %.o,%.$${OBJEXT},$(filter-out src/remote-%,$(make_OBJECTS)))@g' \
-	  $< > $@
-	chmod a-w+x $@
-
-all: build.sh.in
 
 
 # Use automake to build a dependency list file, for Makebase.mk.
@@ -264,9 +259,9 @@ $(CONFIG_CHECKS): checkcfg.%: distdir
 		$(AM_DISTCHECK_CONFIGURE_FLAGS) $(DISTCHECK_CONFIGURE_FLAGS)
 	exec >>'checkcfg.$*.log' 2>&1; set -x; \
 	   cd $(distdir)/_build \
-	&& ./build.sh \
-	&& ./make $(AM_MAKEFLAGS) check \
-	&& ./make $(AM_MAKEFLAGS) clean
+	&& OUTDIR=_bld ../build.sh \
+	&& _bld/make $(AM_MAKEFLAGS) check-local \
+	&& _bld/make $(AM_MAKEFLAGS) clean
 	exec >>'checkcfg.$*.log' 2>&1; set -x; \
 	   cd $(distdir)/_build \
 	&& $(NR_MAKE) $(AM_MAKEFLAGS) CFLAGS='$(AM_CFLAGS)' \
@@ -403,7 +398,7 @@ $(COV_BUILD_FILE): $(filter %.c %.h,$(DISTFILES))
 		CFLAGS='$(AM_CFLAGS)'
 	PATH="$${COVERITY_PATH:+$$COVERITY_PATH/bin:}$$PATH"; \
 	    cd '$(distdir)'/_build \
-		&& cov-build --dir cov-int ./build.sh
+		&& cov-build --dir cov-int ../build.sh
 	rm -f '$@'
 	(cd '$(distdir)'/_build && tar czf - cov-int) > '$@'
 

@@ -1469,25 +1469,27 @@ build it---otherwise it would apply the same match-anything rule to
 @cindex reading makefiles
 @cindex makefile, reading
 
-GNU @code{make} does its work in two distinct phases.  During the first
-phase it reads all the makefiles, included makefiles, etc. and
-internalizes all the variables and their values, implicit and explicit
-rules, and constructs a dependency graph of all the targets and their
-prerequisites.  During the second phase, @code{make} uses these internal
-structures to determine what targets will need to be rebuilt and to
-invoke the rules necessary to do so.
+GNU @code{make} does its work in two distinct phases.  During the
+first phase it reads all the makefiles, included makefiles, etc. and
+internalizes all the variables and their values and implicit and
+explicit rules, and builds a dependency graph of all the targets and
+their prerequisites.  During the second phase, @code{make} uses this
+internalized data to determine which targets need to be updated and
+run the recipes necessary to update them.
 
 It's important to understand this two-phase approach because it has a
 direct impact on how variable and function expansion happens; this is
-often a source of some confusion when writing makefiles.  Here we will
-present a summary of the phases in which expansion happens for different
-constructs within the makefile.  We say that expansion is
-@dfn{immediate} if it happens during the first phase: in this case
-@code{make} will expand any variables or functions in that section of a
-construct as the makefile is parsed.  We say that expansion is
-@dfn{deferred} if expansion is not performed immediately.  Expansion of
-a deferred construct is not performed until either the construct appears
-later in an immediate context, or until the second phase.
+often a source of some confusion when writing makefiles.  Below is a
+summary of the different constructs that can be found in a makefile,
+and the phase in which expansion happens for each part of the
+construct.
+
+We say that expansion is @dfn{immediate} if it happens during the
+first phase: @code{make} will expand that part of the construct as the
+makefile is parsed.  We say that expansion is @dfn{deferred} if it is
+not immediate.  Expansion of a deferred construct part is delayed
+until the expansion is used: either when it is referenced in an
+immediate context, or when it is needed during the second phase.
 
 You may not be familiar with some of these constructs yet.  You can
 reference this section as you become familiar with them, in later
@@ -1540,14 +1542,14 @@ define @var{immediate} !=
 endef
 @end example
 
-For the append operator, @samp{+=}, the right-hand side is considered
+For the append operator @samp{+=}, the right-hand side is considered
 immediate if the variable was previously set as a simple variable
 (@samp{:=} or @samp{::=}), and deferred otherwise.
 
-For the shell assignment operator, @samp{!=}, the right-hand side is
-evaluated immediately and handed to the shell.  The result is stored in the
-variable named on the left, and that variable becomes a simple variable
-(and will thus be re-evaluated on each reference).
+For the shell assignment operator @samp{!=}, the right-hand side is
+evaluated immediately and handed to the shell.  The result is stored
+in the variable named on the left, and that variable becomes a simple
+variable (and will thus be re-evaluated on each reference).
 
 @subheading Conditional Directives
 @cindex ifdef, expansion
@@ -1576,10 +1578,10 @@ A rule is always expanded the same way, regardless of the form:
         @var{deferred}
 @end example
 
-That is, the target and prerequisite sections are expanded immediately,
-and the recipe used to construct the target is always deferred.  This
-general rule is true for explicit rules, pattern rules, suffix rules,
-static pattern rules, and simple prerequisite definitions.
+That is, the target and prerequisite sections are expanded
+immediately, and the recipe used to build the target is always
+deferred.  This is true for explicit rules, pattern rules, suffix
+rules, static pattern rules, and simple prerequisite definitions.
 
 @node Parsing Makefiles, Secondary Expansion, Reading Makefiles, Makefiles
 @section How Makefiles Are Parsed
@@ -3980,7 +3982,7 @@ the statements in sequence.  For example:
 
 @example
 foo : bar/lose
-        cd $(@@D) && gobble $(@@F) > ../$@@
+        cd $(<D) && gobble $(<F) > ../$@@
 @end example
 
 @noindent
@@ -5523,17 +5525,19 @@ replaced; other occurrences of @var{a} in the value are unaltered.  For
 example:@refill
 
 @example
-foo := a.o b.o c.o
+foo := a.o b.o l.a c.o
 bar := $(foo:.o=.c)
 @end example
 
 @noindent
-sets @samp{bar} to @samp{a.c b.c c.c}.  @xref{Setting, ,Setting Variables}.
+sets @samp{bar} to @samp{a.c b.c l.a c.c}.  @xref{Setting, ,Setting Variables}.
 
-A substitution reference is actually an abbreviation for use of the
-@code{patsubst} expansion function (@pxref{Text Functions, ,Functions for String Substitution and Analysis}).  We provide
-substitution references as well as @code{patsubst} for compatibility with
-other implementations of @code{make}.
+A substitution reference is shorthand for the @code{patsubst}
+expansion function (@pxref{Text Functions, ,Functions for String Substitution and Analysis}):
+@samp{$(@var{var}:@var{a}=@var{b})} is equivalent to
+@samp{$(patsubst %@var{a},%@var{b},@var{var})}.  We provide
+substitution references as well as @code{patsubst} for compatibility
+with other implementations of @code{make}.
 
 @findex patsubst
 Another type of substitution reference lets you use the full power of
@@ -5548,13 +5552,13 @@ for a description of the @code{patsubst} function.@refill
 @group
 @exdent For example:
 
-foo := a.o b.o c.o
+foo := a.o b.o l.a c.o
 bar := $(foo:%.o=%.c)
 @end group
 @end example
 
 @noindent
-sets @samp{bar} to @samp{a.c b.c c.c}.
+sets @samp{bar} to @samp{a.c b.c l.a c.c}.
 
 @node Computed Names,  , Substitution Refs, Advanced
 @subsection Computed Variable Names
@@ -11623,7 +11627,8 @@ On POSIX systems the jobserver is implemented as a simple UNIX pipe.
 The pipe will be pre-loaded with one single-character token for each
 available job.  To obtain an extra slot you must read a single
 character from the jobserver pipe; to release a slot you must write a
-single character back into the jobserver pipe.
+single character back into the jobserver pipe.  Note that the read
+side of the jobserver pipe is set to ``blocking'' mode.
 
 To access the pipe you must parse the @code{MAKEFLAGS} variable and
 look for the argument string @code{--jobserver-auth=R,W} where

@@ -292,12 +292,9 @@ char *strerror (int errnum);
 char *strsignal (int signum);
 #endif
 
-#if defined(HAVE_UMASK)
-# define UMASK(_m)  umask (_m)
-# define MODE_T     mode_t
-#else
-# define UMASK(_m)  0
-# define MODE_T     int
+#if !defined(HAVE_UMASK)
+typedef int mode_t;
+extern mode_t umask (mode_t);
 #endif
 
 /* ISDIGIT offers the following features:
@@ -451,7 +448,8 @@ extern int unixy_shell;
 #define NEXT_TOKEN(s)   while (ISSPACE (*(s))) ++(s)
 #define END_OF_TOKEN(s) while (! STOP_SET (*(s), MAP_SPACE|MAP_NUL)) ++(s)
 
-#if defined(HAVE_SYS_RESOURCE_H) && defined(HAVE_GETRLIMIT) && defined(HAVE_SETRLIMIT)
+/* We can't run setrlimit when using posix_spawn.  */
+#if defined(HAVE_SYS_RESOURCE_H) && defined(HAVE_GETRLIMIT) && defined(HAVE_SETRLIMIT) && !defined(USE_POSIX_SPAWN)
 # define SET_STACK_SIZE
 #endif
 #ifdef SET_STACK_SIZE
@@ -598,6 +596,14 @@ typedef int (*load_func_t)(const floc *flocp);
 int load_file (const floc *flocp, const char **filename, int noerror);
 void unload_file (const char *name);
 
+/* Maintainer mode support */
+#ifdef MAKE_MAINTAINER_MODE
+# define SPIN(_s) spin (_s)
+void spin (const char* suffix);
+#else
+# define SPIN(_s)
+#endif
+
 /* We omit these declarations on non-POSIX systems which define _POSIX_VERSION,
    because such systems often declare them in header files anyway.  */
 
@@ -726,14 +732,12 @@ extern unsigned int commands_started;
 
 extern int handling_fatal_signal;
 
-
 #ifndef MIN
 #define MIN(_a,_b) ((_a)<(_b)?(_a):(_b))
 #endif
 #ifndef MAX
 #define MAX(_a,_b) ((_a)>(_b)?(_a):(_b))
 #endif
-
 
 #define MAKE_SUCCESS 0
 #define MAKE_TROUBLE 1

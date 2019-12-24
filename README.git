@@ -85,18 +85,27 @@ need to install the following extra software:
 * autopoint
 * pkg-config
 * texinfo (for makeinfo)
+* GCC (Clang's GCC emulation is not sufficient)
+* GNU make (POSIX make is not sufficient)
 
-And any tools that those utilities require (GNU m4, Perl, etc.)
+And any tools that those utilities require (GNU m4, etc.)
+
+To run the tests you must install Perl.
+
+To build a release you'll need to install lzip.
 
 GNU make requires gnulib to provide some facilities.  If you want to maintain
 a local installation of gnulib you can set GNULIB_SRCDIR to point to it.
 Otherwise, ./bootstrap will obtain a clone for you.
 
 Unfortunately due to issues with gnulib's getloadavg, you must have automake
-1.16.1 or above.  This version is not yet widely available in GNU/Linux
+1.16.1 or above.  This version may not yet be available through GNU/Linux
 package managers.  If you need to install from source be sure to set
 ACLOCAL_PATH to point to the pkg-config location (e.g., /usr/share/aclocal).
 
+If you want to build from Git with a non-GCC compiler, add "MAKE_CFLAGS=" to
+your make command line (or at least remove any flags your compiler does not
+support).
 
 When building from Git you must build in the source directory: "VPATH
 builds" from remote directories are not supported.  Once you've created
@@ -114,9 +123,24 @@ That is, you can just run:
 
   $ ./configure
   $ make check
-  $ make install
 
-to build and install GNU make.
+to build and test GNU make.
+
+NOTE! This method builds GNU make in "maintainer mode".  Make programs built
+      in this mode it will be slower, possibly MUCH slower: there are various
+      sanity checks enabled.  Further this mode assumes a modern GCC, GNU
+      libc, and well-formed system headers and enables a high level of
+      warnings AND enables -Werror to turn warnings into failures.
+
+      If you want to build from Git with "maintainer mode" disabled, add
+      "MAKE_MAINTAINER_MODE=" to the make command line.  If you want to turn
+      off the extra warning flags, add "MAKE_CFLAGS=" to the make command
+      line.
+
+      For example:
+        $ ./configure
+        $ make check MAKE_MAINTAINER_MODE= MAKE_CFLAGS=
+        $ make install
 
 
 Building From Git for Windows
@@ -146,18 +170,19 @@ run:
 
 and, if you like:
 
-  $ make dist-bzip2
+  $ make dist-lzip
 
 Even better, you should run this:
 
   $ make distcheck
 
-Which will build both .gz and .bz2 package files, then unpack them into
-a temporary location, try to build them, and repack them, verifying that
-everything works, you get the same results, _and_ no extraneous files
-are left over after the "distclean" rule--whew!!  Now, _that_ is why
-converting to Automake is worth the trouble!  A big "huzzah!" to Tom
-T. and the AutoToolers!
+Which will build both .gz and .lz package files, then unpack one into a
+temporary location, try to build it and repack it, then verifying that
+everything works, you get the same results, _and_ no extraneous files are
+left over after the "distclean" rule.
+
+This package can be unpacked and built to give a "normal" (non-maintainer
+mode) result.
 
 
 Steps to Release

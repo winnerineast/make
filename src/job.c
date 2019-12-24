@@ -17,6 +17,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "makeint.h"
 
 #include <assert.h>
+#include <string.h>
 
 #include "job.h"
 #include "debug.h"
@@ -24,8 +25,6 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "commands.h"
 #include "variable.h"
 #include "os.h"
-
-#include <string.h>
 
 /* Default shell to use.  */
 #ifdef WINDOWS32
@@ -139,6 +138,7 @@ extern int wait3 ();
 
 #ifdef USE_POSIX_SPAWN
 # include <spawn.h>
+# include "findprog.h"
 #endif
 
 #if !defined (wait) && !defined (POSIX)
@@ -557,11 +557,8 @@ child_error (struct child *child,
     nm = _("<builtin>");
   else
     {
-      /* We can't use the standard <FILE>:<LINENO> syntax here because
-         Emacs misinterprets it and matches a bogus filename in the compile
-         buffer.  */
       char *a = alloca (strlen (flocp->filenm) + 6 + INTSTR_LENGTH + 1);
-      sprintf (a, "%s;%lu", flocp->filenm, flocp->lineno + flocp->offset);
+      sprintf (a, "%s:%lu", flocp->filenm, flocp->lineno + flocp->offset);
       nm = a;
     }
 
@@ -724,7 +721,9 @@ reap_children (int block, int err)
       else if (pid < 0)
         {
           /* A remote status command failed miserably.  Punt.  */
+#if !defined(__MSDOS__) && !defined(_AMIGA) && !defined(WINDOWS32)
         remote_status_lose:
+#endif
           pfatal_with_name ("remote_status");
         }
       else
@@ -905,6 +904,36 @@ reap_children (int block, int err)
         --job_counter;
 
     process_child:
+
+#if defined(USE_POSIX_SPAWN)
+      /* Some versions of posix_spawn() do not detect errors such as command
+         not found until after they fork.  In that case they will exit with a
+         code of 127.  Try to detect that and provide a useful error message.
+         Otherwise we'll just show the error below, as normal.  */
+      if (exit_sig == 0 && exit_code == 127 && c->cmd_name)
+        {
+          const char *e = NULL;
+          struct stat st;
+          int r;
+
+          /* There are various ways that this will show a different error than
+             fork/exec.  To really get the right error we'd have to fall back
+             to fork/exec but I don't want to bother with that.  Just do the
+             best we can.  */
+
+          EINTRLOOP(r, stat(c->cmd_name, &st));
+          if (r < 0)
+            e = strerror (errno);
+          else if (S_ISDIR(st.st_mode) || !(st.st_mode & S_IXUSR))
+            e = strerror (EACCES);
+          else if (st.st_size == 0)
+            e = strerror (ENOEXEC);
+
+          if (e)
+            OSS(error, NILF, "%s: %s", c->cmd_name, e);
+        }
+#endif
+
       /* Determine the failure status: 0 for success, 1 for updating target in
          question mode, 2 for anything else.  */
       if (exit_sig == 0 && exit_code == 0)
@@ -1041,11 +1070,11 @@ reap_children (int block, int err)
         {
           DB (DB_JOBS, (_("Removing child %p PID %s%s from chain.\n"),
                         c, pid2str (c->pid), c->remote ? _(" (remote)") : ""));
-
-          /* There is now another slot open.  */
-          if (job_slots_used > 0)
-            --job_slots_used;
         }
+
+      /* There is now another slot open.  */
+      if (job_slots_used > 0)
+        job_slots_used -= c->jobslot;
 
       /* Remove the child from the chain and free it.  */
       if (lastc == 0)
@@ -1113,6 +1142,7 @@ free_child (struct child *child)
       free (child->environment);
     }
 
+  free (child->cmd_name);
   free (child);
 }
 
@@ -1207,12 +1237,11 @@ start_job_command (struct child *child)
       }
 
     argv = p;
-    /* Although construct_command_argv contains some code for VMS, it was/is
-       not called/used.  Please note, for VMS argv is a string (not an array
-       of strings) which contains the complete command line, which for
-       multi-line variables still includes the newlines.  So detect newlines
-       and set 'end' (which is used for child->command_ptr) instead of
-       (re-)writing construct_command_argv */
+    /* Please note, for VMS argv is a string (not an array of strings) which
+       contains the complete command line, which for multi-line variables
+       still includes the newlines.  So detect newlines and set 'end' (which
+       is used for child->command_ptr) instead of (re-)writing
+       construct_command_argv */
     if (!one_shell)
       {
         char *s = p;
@@ -1420,8 +1449,7 @@ start_job_command (struct child *child)
       child->remote = 0;
 
 #ifdef VMS
-      if (!child_execute_job (child, argv))
-        child->pid = -1;
+      child->pid = child_execute_job ((struct childbase *)child, 1, argv);
 
 #else
 
@@ -1429,11 +1457,12 @@ start_job_command (struct child *child)
 
       jobserver_pre_child (flags & COMMANDS_RECURSE);
 
-      child->pid = child_execute_job (&child->output, child->good_stdin,
-                                      argv, child->environment);
+      child->pid = child_execute_job ((struct childbase *)child,
+                                      child->good_stdin, argv);
 
       environ = parent_environ; /* Restore value child may have clobbered.  */
       jobserver_post_child (flags & COMMANDS_RECURSE);
+
 #endif /* !VMS */
     }
 
@@ -1615,6 +1644,8 @@ start_waiting_job (struct child *c)
                         c->remote ? _(" (remote)") : ""));
           /* One more job slot is in use.  */
           ++job_slots_used;
+          assert (c->jobslot == 0);
+          c->jobslot = 1;
         }
       children = c;
       unblock_sigs ();
@@ -1977,7 +2008,18 @@ load_too_high (void)
 #else
   static double last_sec;
   static time_t last_now;
-  static int proc_fd = -2;
+
+  /* This is disabled by default for now, because it will behave badly if the
+     user gives a value > the number of cores; in that situation the load will
+     never be exceeded, this function always returns false, and we'll start
+     all the jobs.  Also, it's not quite right to limit jobs to the number of
+     cores not busy since a job takes some time to start etc.  Maybe that's
+     OK, I'm not sure exactly how to handle that, but for sure we need to
+     clamp this value at the number of cores before this can be enabled.
+   */
+#define PROC_FD_INIT -1
+  static int proc_fd = PROC_FD_INIT;
+
   double load, guess;
   time_t now;
 
@@ -2128,7 +2170,7 @@ start_waiting_jobs (void)
 /* EMX: Start a child process. This function returns the new pid.  */
 # if defined __EMX__
 pid_t
-child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
+child_execute_job (struct childbase *child, int good_stdin, char **argv)
 {
   pid_t pid;
   int fdin = good_stdin ? FD_STDIN : get_bad_stdin ();
@@ -2139,12 +2181,12 @@ child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
   int save_fderr = -1;
 
   /* Divert child output if we want to capture output.  */
-  if (out && out->syncout)
+  if (child->output.syncout)
     {
-      if (out->out >= 0)
-        fdout = out->out;
-      if (out->err >= 0)
-        fderr = out->err;
+      if (child->output.out >= 0)
+        fdout = child->output.out;
+      if (child->output.err >= 0)
+        fderr = child->output.err;
     }
 
   /* For each FD which needs to be redirected first make a dup of the standard
@@ -2190,7 +2232,7 @@ child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
     }
 
   /* Run the command.  */
-  pid = exec_command (argv, envp);
+  pid = exec_command (argv, child->environment);
 
   /* Restore stdout/stdin/stderr of the parent and close temporary FDs.  */
   if (save_fdin >= 0)
@@ -2227,28 +2269,29 @@ child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
 
 /* POSIX:
    Create a child process executing the command in ARGV.
-   ENVP is the environment of the new program.  Returns the PID or -1.  */
+   Returns the PID or -1.  */
 pid_t
-child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
+child_execute_job (struct childbase *child, int good_stdin, char **argv)
 {
   const int fdin = good_stdin ? FD_STDIN : get_bad_stdin ();
   int fdout = FD_STDOUT;
   int fderr = FD_STDERR;
   pid_t pid;
   int r;
-#if USE_POSIX_SPAWN
-  short flags = 0;
+#if defined(USE_POSIX_SPAWN)
+  char *cmd;
   posix_spawnattr_t attr;
   posix_spawn_file_actions_t fa;
+  short flags = 0;
 #endif
 
   /* Divert child output if we want to capture it.  */
-  if (out && out->syncout)
+  if (child->output.syncout)
     {
-      if (out->out >= 0)
-        fdout = out->out;
-      if (out->err >= 0)
-        fderr = out->err;
+      if (child->output.out >= 0)
+        fdout = child->output.out;
+      if (child->output.err >= 0)
+        fderr = child->output.err;
     }
 
 #if !defined(USE_POSIX_SPAWN)
@@ -2276,11 +2319,9 @@ child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
     EINTRLOOP (r, dup2 (fderr, FD_STDERR));
 
   /* Run the command.  */
-  exec_command (argv, envp);
+  exec_command (argv, child->environment);
 
-#else /* use posix_spawn() */
-
-  pid = -1;
+#else /* USE_POSIX_SPAWN */
 
   if ((r = posix_spawnattr_init (&attr)) != 0)
     goto done;
@@ -2308,10 +2349,6 @@ child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
   flags |= POSIX_SPAWN_USEVFORK;
 #endif
 
-#ifdef SET_STACK_SIZE
-  /* No support for resetting the stack limit with posix_spawn().  */
-#endif
-
   /* For any redirected FD, dup2() it to the standard FD.
      They are all marked close-on-exec already.  */
   if (fdin >= 0 && fdin != FD_STDIN)
@@ -2331,16 +2368,77 @@ child_execute_job (struct output *out, int good_stdin, char **argv, char **envp)
   if ((r = posix_spawnattr_setflags (&attr, flags)) != 0)
     goto cleanup;
 
+  /* Look up the program on the child's PATH, if needed.  */
+  {
+    const char *p = NULL;
+    char **pp;
+
+    for (pp = child->environment; *pp != NULL; ++pp)
+      if ((*pp)[0] == 'P' && (*pp)[1] == 'A' && (*pp)[2] == 'T'
+          && (*pp)[3] == 'H' &&(*pp)[4] == '=')
+        {
+          p = (*pp) + 5;
+          break;
+        }
+
+    cmd = (char *)find_in_given_path (argv[0], p, 0);
+  }
+
+  if (!cmd)
+    {
+      r = errno;
+      goto cleanup;
+    }
+
   /* Start the program.  */
-  while ((r = posix_spawnp (&pid, argv[0], &fa, &attr, argv, envp)) == EINTR)
+  while ((r = posix_spawn (&pid, cmd, &fa, &attr, argv,
+                           child->environment)) == EINTR)
     ;
+
+  /* posix_spawn() doesn't provide sh fallback like exec() does; implement
+     it here.  POSIX doesn't specify the path to sh so use the default.  */
+
+  if (r == ENOEXEC)
+    {
+      char **nargv;
+      char **pp;
+      size_t l = 0;
+
+      for (pp = argv; *pp != NULL; ++pp)
+        ++l;
+
+      nargv = xmalloc (sizeof (char *) * (l + 3));
+      nargv[0] = (char *)default_shell;
+      nargv[1] = cmd;
+      memcpy (&nargv[2], &argv[1], sizeof (char *) * l);
+
+      while ((r = posix_spawn (&pid, nargv[0], &fa, &attr, nargv,
+                               child->environment)) == EINTR)
+        ;
+
+      free (nargv);
+    }
+
+  if (r == 0)
+    {
+      /* Spawn succeeded but may fail later: remember the command.  */
+      free (child->cmd_name);
+      if (cmd != argv[0])
+        child->cmd_name = cmd;
+      else
+        child->cmd_name = xstrdup(cmd);
+    }
 
  cleanup:
   posix_spawn_file_actions_destroy (&fa);
   posix_spawnattr_destroy (&attr);
-#endif /* have posix_spawn() */
 
  done:
+  if (r != 0)
+    pid = -1;
+
+#endif /* USE_POSIX_SPAWN */
+
   if (pid < 0)
     OSS (error, NILF, "%s: %s", argv[0], strerror (r));
 
@@ -2461,7 +2559,7 @@ exec_command (char **argv, char **envp)
       break;
     case ENOEXEC:
       {
-        /* The file is not executable.  Try it as a shell script.  */
+        /* The file was not a program.  Try it as a shell script.  */
         const char *shell;
         char **new_argv;
         int argc;
@@ -3535,43 +3633,6 @@ construct_command_argv (char *line, char **restp, struct file *file,
   char *shell, *ifs, *shellflags;
   char **argv;
 
-#ifdef VMS
-  char *cptr;
-  int argc;
-
-  argc = 0;
-  cptr = line;
-  for (;;)
-    {
-      while ((*cptr != 0) && (ISSPACE (*cptr)))
-        cptr++;
-      if (*cptr == 0)
-        break;
-      while ((*cptr != 0) && (!ISSPACE (*cptr)))
-        cptr++;
-      argc++;
-    }
-
-  argv = xmalloc (argc * sizeof (char *));
-  if (argv == 0)
-    abort ();
-
-  cptr = line;
-  argc = 0;
-  for (;;)
-    {
-      while ((*cptr != 0) && (ISSPACE (*cptr)))
-        cptr++;
-      if (*cptr == 0)
-        break;
-      DB (DB_JOBS, ("argv[%d] = [%s]\n", argc, cptr));
-      argv[argc++] = cptr;
-      while ((*cptr != 0) && (!ISSPACE (*cptr)))
-        cptr++;
-      if (*cptr != 0)
-        *cptr++ = 0;
-    }
-#else
   {
     /* Turn off --warn-undefined-variables while we expand SHELL and IFS.  */
     int save = warn_undefined_variables_flag;
@@ -3646,7 +3707,7 @@ construct_command_argv (char *line, char **restp, struct file *file,
   free (shell);
   free (shellflags);
   free (ifs);
-#endif /* !VMS */
+
   return argv;
 }
 

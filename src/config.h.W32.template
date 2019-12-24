@@ -261,9 +261,6 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 /* Define to 1 if you have the 'strdup' function. */
 #define HAVE_STRDUP 1
 
-/* Define to 1 if you have the 'strerror' function. */
-#define HAVE_STRERROR 1
-
 /* Define to 1 if you have the 'stricmp' function. */
 #define HAVE_STRICMP 1
 
@@ -294,12 +291,23 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 /* Define to 1 if you have the 'strsignal' function. */
 /* #undef HAVE_STRSIGNAL */
 
+/* Define to 1 if `d_type' is a member of `struct dirent'. */
+/* SV 57152: MinGW64 version of dirent doesn't support d_type. */
+#ifndef __MINGW64__
+# define HAVE_STRUCT_DIRENT_D_TYPE 1
+#endif
+
 /* Define to 1 if you have the `isatty' function. */
 #define HAVE_ISATTY 1
 
 /* Define to 1 if you have the `ttyname' function. */
 #define HAVE_TTYNAME 1
 char *ttyname (int);
+
+/* Define to 1 if you have the `umask' function. */
+#ifdef __MINGW32__
+# define HAVE_UMASK 1
+#endif
 
 /* Define to 1 if 'n_un.n_name' is a member of 'struct nlist'. */
 /* #undef HAVE_STRUCT_NLIST_N_UN_N_NAME */
@@ -472,6 +480,11 @@ char *ttyname (int);
 
 /* Define to empty if 'const' does not conform to ANSI C. */
 /* #undef const */
+
+#ifdef __MINGW32__
+# undef __USE_MINGW_ANSI_STDIO
+# define __USE_MINGW_ANSI_STDIO 1
+#endif
 
 #include <sys/types.h>
 

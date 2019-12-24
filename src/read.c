@@ -1395,14 +1395,7 @@ eval (struct ebuffer *ebuf, int set_default)
                   }
               }
           }
-
-        continue;
       }
-
-      /* We get here except in the case that we just read a rule line.
-         Record now the last rule we read, so following spurious
-         commands are properly diagnosed.  */
-      record_waiting_files ();
     }
 
 #undef word1eq
@@ -2836,9 +2829,9 @@ get_next_mword (char *buffer, char **startp, size_t *length)
           /* A word CAN include a colon in its drive spec.  The drive
              spec is allowed either at the beginning of a word, or as part
              of the archive member name, like in "libfoo.a(d:/foo/bar.o)".  */
-          if (!(p - beg >= 2
-                && (*p == '/' || *p == '\\') && isalpha ((unsigned char)p[-2])
-                && (p - beg == 2 || p[-3] == '(')))
+          if ((p - beg == 2 || (p - beg > 2 && p[-3] == '('))
+              && isalpha ((unsigned char)p[-2]))
+            break;
 #endif
           goto done_word;
 
@@ -3104,11 +3097,13 @@ tilde_expand (const char *name)
 
    The string is passed as STRINGP, the address of a string pointer.
    The string pointer is updated to point at the first character
-   not parsed, which either is a null char or equals STOPCHAR.
+   not parsed, which either is a null char or equals STOPMAP.
 
-   SIZE is how big to construct chain elements.
+   SIZE is how large (in bytes) each element in the new chain should be.
    This is useful if we want them actually to be other structures
    that have room for additional info.
+
+   STOPMAP is a map of characters that tell us to stop parsing.
 
    PREFIX, if non-null, is added to the beginning of each filename.
 
@@ -3180,7 +3175,7 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
 #endif
       char *s;
       size_t nlen;
-      int i;
+      int tot, i;
 
       /* Skip whitespace; at the end of the string or STOPCHAR we're done.  */
       NEXT_TOKEN (p);
@@ -3389,7 +3384,7 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
       if (NONE_SET (flags, PARSEFS_EXISTS) && strpbrk (name, "?*[") == NULL)
         {
           globme = 0;
-          i = 1;
+          tot = 1;
           nlist = &name;
         }
       else
@@ -3400,7 +3395,7 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
 
           case 0:
             /* Success.  */
-            i = gl.gl_pathc;
+            tot = gl.gl_pathc;
             nlist = (const char **)gl.gl_pathv;
             break;
 
@@ -3408,20 +3403,20 @@ parse_file_seq (char **stringp, size_t size, int stopmap,
             /* If we want only existing items, skip this one.  */
             if (ANY_SET (flags, PARSEFS_EXISTS))
               {
-                i = 0;
+                tot = 0;
                 break;
               }
             /* FALLTHROUGH */
 
           default:
             /* By default keep this name.  */
-            i = 1;
+            tot = 1;
             nlist = &name;
             break;
           }
 
       /* For each matched element, add it to the list.  */
-      while (i-- > 0)
+      for (i = 0; i < tot; ++i)
 #ifndef NO_ARCHIVES
         if (memname != 0)
           {
