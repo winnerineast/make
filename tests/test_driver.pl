@@ -5,7 +5,7 @@
 # Written 91-12-02 through 92-01-01 by Stephen McGee.
 # Modified 92-02-11 through 92-02-22 by Chris Arthur to further generalize.
 #
-# Copyright (C) 1991-2019 Free Software Foundation, Inc.
+# Copyright (C) 1991-2020 Free Software Foundation, Inc.
 # This file is part of GNU Make.
 #
 # GNU Make is free software; you can redistribute it and/or modify it under
@@ -30,7 +30,9 @@
 
 # $Id$
 
+use Config;
 use Cwd;
+use File::Spec;
 
 # The number of test categories we've run
 $categories_run = 0;
@@ -53,16 +55,36 @@ $test_passed = 1;
 $test_timeout = 5;
 $test_timeout = 10 if $^O eq 'VMS';
 
-# Path to Perl--make sure it uses forward-slashes
+# Path to Perl
 $perl_name = $^X;
+if ($^O ne 'VMS') {
+    $perl_name .= $Config{_exe} unless $perl_name =~ m/$Config{_exe}$/i;
+}
+# If it's a simple name, look it up on PATH
+{
+    my ($v,$d,$f) = File::Spec->splitpath($perl_name);
+    if (!$d) {
+        my $perl = undef;
+        foreach my $p (File::Spec->path()) {
+            my $f = File::Spec->catfile($p, $f);
+            if (-e $f) {
+                $perl = $f;
+                last;
+            }
+        }
+        if ($perl) {
+            $perl_name = $perl;
+        } else {
+            print "Cannot locate Perl interpreter $perl_name\n";
+        }
+    }
+}
+# Make sure it uses forward-slashes even on Windows, else it won't work
+# in recipes
 $perl_name =~ tr,\\,/,;
 
-# %makeENV is the cleaned-out environment.
+# %makeENV is the cleaned-out environment.  Tests must not modify it.
 %makeENV = ();
-
-# %extraENV are any extra environment variables the tests might want to set.
-# These are RESET AFTER EVERY TEST!
-%extraENV = ();
 
 sub vms_get_process_logicals {
   # Sorry for the long note here, but to keep this test running on
@@ -123,11 +145,6 @@ sub resetENV
         delete $ENV{$v};
       }
     }
-  }
-
-  foreach $v (keys %extraENV) {
-    $ENV{$v} = $extraENV{$v};
-    delete $extraENV{$v};
   }
 }
 
@@ -211,7 +228,7 @@ sub toplevel
   if (-d $workpath) {
     print "Clearing $workpath...\n";
     &remove_directory_tree("$workpath/")
-        or &error ("Couldn't wipe out $workpath\n");
+        or &error ("Couldn't wipe out $workpath: $!\n");
   } else {
     mkdir ($workpath, 0777) or &error ("Couldn't mkdir $workpath: $!\n");
   }
@@ -240,7 +257,7 @@ sub toplevel
     foreach my $dir (@dirs) {
       next if ($dir =~ /^(\..*|CVS|RCS)$/ || ! -d "$scriptpath/$dir");
       push (@rmdirs, $dir);
-      # VMS can have overlayed file systems, so directories may repeat.
+      # VMS can have overlaid file systems, so directories may repeat.
       next if -d "$workpath/$dir";
       mkdir ("$workpath/$dir", 0777)
           or &error ("Couldn't mkdir $workpath/$dir: $!\n");
@@ -1033,14 +1050,12 @@ sub _run_with_timeout
 # This runs a command without any debugging info.
 sub _run_command
 {
-  # We reset this before every invocation.  On Windows I think there is only
-  # one environment, not one per process, so I think that variables set in
-  # test scripts might leak into subsequent tests if this isn't reset--???
-  resetENV();
-
   my $orig = $SIG{ALRM};
   my $code = eval { _run_with_timeout(@_); };
   $SIG{ALRM} = $orig;
+
+  # Reset then environment so that it's clean for the next test.
+  resetENV();
 
   if ($@) {
     # The eval failed.  If it wasn't SIGALRM then die.
@@ -1103,8 +1118,9 @@ sub remove_directory_tree
   -e $targetdir or return 1;
 
   &remove_directory_tree_inner ("RDT00", $targetdir) or return 0;
-  if ($nuketop) {
-    rmdir($targetdir) or return 0;
+  if ($nuketop && !rmdir ($targetdir)) {
+    print "Cannot remove $targetdir: $!\n";
+    return 0;
   }
 
   return 1;
@@ -1123,10 +1139,16 @@ sub remove_directory_tree_inner
 
     lstat ($object);
     if (-d _ && &remove_directory_tree_inner ($subdirhandle, $object)) {
-      rmdir $object or return 0;
+      if (!rmdir($object)) {
+        print "Cannot remove $object: $!\n";
+        return 0;
+      }
     } else {
       if ($^O ne 'VMS') {
-        unlink $object or return 0;
+        if (!unlink $object) {
+          print "Cannot unlink $object: $!\n";
+          return 0;
+        }
       } else {
         # VMS can have multiple versions of a file.
         1 while unlink $object;

@@ -1,5 +1,5 @@
 /* Output to stdout / stderr for GNU make
-Copyright (C) 2013-2019 Free Software Foundation, Inc.
+Copyright (C) 2013-2020 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -144,14 +144,18 @@ log_working_directory (int entering)
   return 1;
 }
 
-/* Set a file descriptor to be in O_APPEND mode.
-   If it fails, just ignore it.  */
+/* Set a file descriptor referring to a regular file
+   to be in O_APPEND mode.  If it fails, just ignore it.  */
 
 static void
 set_append_mode (int fd)
 {
 #if defined(F_GETFL) && defined(F_SETFL) && defined(O_APPEND)
-  int flags = fcntl (fd, F_GETFL, 0);
+  struct stat stbuf;
+  int flags;
+  if (fstat (fd, &stbuf) != 0 || !S_ISREG (stbuf.st_mode))
+    return;
+  flags = fcntl (fd, F_GETFL, 0);
   if (flags >= 0)
     {
       int r;
@@ -367,7 +371,7 @@ output_dump (struct output *out)
       void *sem = acquire_semaphore ();
 
       /* Log the working directory for this dump.  */
-      if (print_directory_flag && output_sync != OUTPUT_SYNC_RECURSE)
+      if (print_directory && output_sync != OUTPUT_SYNC_RECURSE)
         traced = log_working_directory (1);
 
       if (outfd_not_empty)
@@ -517,7 +521,7 @@ output_start (void)
   /* If we're not syncing this output per-line or per-target, make sure we emit
      the "Entering..." message where appropriate.  */
   if (output_sync == OUTPUT_SYNC_NONE || output_sync == OUTPUT_SYNC_RECURSE)
-    if (! stdio_traced && print_directory_flag)
+    if (! stdio_traced && print_directory)
       stdio_traced = log_working_directory (1);
 }
 

@@ -1,5 +1,5 @@
 /* Implicit rule searching for GNU Make.
-Copyright (C) 1988-2019 Free Software Foundation, Inc.
+Copyright (C) 1988-2020 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -152,6 +152,7 @@ struct patdeps
     const char *pattern;
     struct file *file;
     unsigned int ignore_mtime : 1;
+    unsigned int ignore_automatic_vars : 1;
   };
 
 /* This structure stores information about pattern rules that we need
@@ -559,11 +560,12 @@ pattern_search (struct file *file, int archive,
 
                   /* Parse the expanded string.  It might have wildcards.  */
                   p = depname;
-                  dl = PARSE_SIMPLE_SEQ (&p, struct dep);
+                  dl = PARSE_FILE_SEQ (&p, struct dep, MAP_NUL, NULL, PARSEFS_ONEWORD);
                   for (d = dl; d != NULL; d = d->next)
                     {
                       ++deps_found;
                       d->ignore_mtime = dep->ignore_mtime;
+                      d->ignore_automatic_vars = dep->ignore_automatic_vars;
                     }
 
                   /* We've used up this dep, so next time get a new one.  */
@@ -723,6 +725,7 @@ pattern_search (struct file *file, int archive,
 
                   memset (pat, '\0', sizeof (struct patdeps));
                   pat->ignore_mtime = d->ignore_mtime;
+                  pat->ignore_automatic_vars = d->ignore_automatic_vars;
 
                   DBS (DB_IMPLICIT,
                        (is_rule
@@ -913,6 +916,7 @@ pattern_search (struct file *file, int archive,
 
       dep = alloc_dep ();
       dep->ignore_mtime = pat->ignore_mtime;
+      dep->ignore_automatic_vars = pat->ignore_automatic_vars;
       s = strcache_add (pat->name);
       if (recursions)
         dep->name = s;

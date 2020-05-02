@@ -1,6 +1,6 @@
 /* Replacements for Posix functions and Posix functionality for MS-Windows.
 
-Copyright (C) 2013-2019 Free Software Foundation, Inc.
+Copyright (C) 2013-2020 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -29,6 +29,7 @@ this program.  If not, see <http://www.gnu.org/licenses/>.  */
 #ifndef NO_OUTPUT_SYNC
 /* Support for OUTPUT_SYNC and related functionality.  */
 
+#if !defined(GNULIB_defined_rpl_fcntl) && !defined(GNULIB_defined_fcntl)
 /* Emulation of fcntl that supports only F_GETFD and F_SETLKW.  */
 int
 fcntl (intptr_t fd, int cmd, ...)
@@ -142,6 +143,7 @@ fcntl (intptr_t fd, int cmd, ...)
         return -1;
     }
 }
+#endif /* GNULIB_defined_fcntl */
 
 static intptr_t mutex_handle = -1;
 

@@ -1,5 +1,5 @@
 /* Argument parsing and main program of GNU Make.
-Copyright (C) 1988-2019 Free Software Foundation, Inc.
+Copyright (C) 1988-2020 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -96,7 +96,7 @@ int chdir ();
 #endif
 #ifndef STDC_HEADERS
 # ifndef sun                    /* Sun has an incorrect decl in a header.  */
-void exit (int) __attribute__ ((noreturn));
+void exit (int) NORETURN;
 # endif
 double atof ();
 #endif
@@ -227,12 +227,9 @@ int check_symlink_flag = 0;
 
 /* Nonzero means print directory before starting and when done (-w).  */
 
-int print_directory_flag = 0;
-
-/* Nonzero means ignore print_directory_flag and never print the directory.
-   This is necessary because print_directory_flag is set implicitly.  */
-
-int inhibit_print_directory_flag = 0;
+int print_directory;
+static int print_directory_flag = -1;
+static const int default_print_directory_flag = -1;
 
 /* Nonzero means print version information.  */
 
@@ -438,7 +435,8 @@ static const struct command_switch switches[] =
       "no-keep-going" },
     { 't', flag, &touch_flag, 1, 1, 1, 0, 0, "touch" },
     { 'v', flag, &print_version_flag, 1, 1, 0, 0, 0, "version" },
-    { 'w', flag, &print_directory_flag, 1, 1, 0, 0, 0, "print-directory" },
+    { 'w', flag, &print_directory_flag, 1, 1, 0, 0,
+      &default_print_directory_flag, "print-directory" },
 
     /* These options take arguments.  */
     { 'C', filename, &directories, 0, 0, 0, 0, 0, "directory" },
@@ -457,12 +455,13 @@ static const struct command_switch switches[] =
     { CHAR_MAX+1, strlist, &db_flags, 1, 1, 0, "basic", 0, "debug" },
     { CHAR_MAX+2, string, &jobserver_auth, 1, 1, 0, 0, 0, "jobserver-auth" },
     { CHAR_MAX+3, flag, &trace_flag, 1, 1, 0, 0, 0, "trace" },
-    { CHAR_MAX+4, flag, &inhibit_print_directory_flag, 1, 1, 0, 0, 0,
-      "no-print-directory" },
+    { CHAR_MAX+4, flag_off, &print_directory_flag, 1, 1, 0, 0,
+      &default_print_directory_flag, "no-print-directory" },
     { CHAR_MAX+5, flag, &warn_undefined_variables_flag, 1, 1, 0, 0, 0,
       "warn-undefined-variables" },
     { CHAR_MAX+7, string, &sync_mutex, 1, 1, 0, 0, 0, "sync-mutex" },
-    { CHAR_MAX+8, flag_off, &silent_flag, 1, 1, 0, 0, &default_silent_flag, "no-silent" },
+    { CHAR_MAX+8, flag_off, &silent_flag, 1, 1, 0, 0, &default_silent_flag,
+      "no-silent" },
     { CHAR_MAX+9, string, &jobserver_auth, 1, 0, 0, 0, 0, "jobserver-fds" },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
@@ -1313,7 +1312,7 @@ main (int argc, char **argv, char **envp)
   {
     const char *features = "target-specific order-only second-expansion"
                            " else-if shortest-stem undefine oneshell nocomment"
-                           " grouped-target"
+                           " grouped-target extra-prereqs"
 #ifndef NO_ARCHIVES
                            " archives"
 #endif
@@ -1523,6 +1522,18 @@ main (int argc, char **argv, char **envp)
   /* Set always_make_flag if -B was given and we've not restarted already.  */
   always_make_flag = always_make_set && (restarts == 0);
 
+  /* If the user didn't specify any print-directory options, compute the
+     default setting: disable under -s / print in sub-makes and under -C.  */
+
+  if (print_directory_flag == -1)
+    print_directory = !silent_flag && (directories != 0 || makelevel > 0);
+  else
+    print_directory = print_directory_flag;
+
+  /* If -R was given, set -r too (doesn't make sense otherwise!)  */
+  if (no_builtin_variables_flag)
+    no_builtin_rules_flag = 1;
+
   /* Print version information, and exit.  */
   if (print_version_flag)
     {
@@ -1587,6 +1598,68 @@ main (int argc, char **argv, char **envp)
 
   /* We may move, but until we do, here we are.  */
   starting_directory = current_directory;
+
+  /* If there were -C flags, move ourselves about.  */
+  if (directories != 0)
+    {
+      unsigned int i;
+      for (i = 0; directories->list[i] != 0; ++i)
+        {
+          const char *dir = directories->list[i];
+#ifdef WINDOWS32
+          /* WINDOWS32 chdir() doesn't work if the directory has a trailing '/'
+             But allow -C/ just in case someone wants that.  */
+          {
+            char *p = (char *)dir + strlen (dir) - 1;
+            while (p > dir && (p[0] == '/' || p[0] == '\\'))
+              --p;
+            p[1] = '\0';
+          }
+#endif
+          if (chdir (dir) < 0)
+            pfatal_with_name (dir);
+        }
+    }
+
+#ifdef WINDOWS32
+  /*
+   * THIS BLOCK OF CODE MUST COME AFTER chdir() CALL ABOVE IN ORDER
+   * TO NOT CONFUSE THE DEPENDENCY CHECKING CODE IN implicit.c.
+   *
+   * The functions in dir.c can incorrectly cache information for "."
+   * before we have changed directory and this can cause file
+   * lookups to fail because the current directory (.) was pointing
+   * at the wrong place when it was first evaluated.
+   */
+   no_default_sh_exe = !find_and_set_default_shell (NULL);
+#endif /* WINDOWS32 */
+
+  /* Construct the list of include directories to search.  */
+
+  construct_include_path (include_directories == 0
+                          ? 0 : include_directories->list);
+
+  /* If we chdir'ed, figure out where we are now.  */
+  if (directories)
+    {
+#ifdef WINDOWS32
+      if (getcwd_fs (current_directory, GET_PATH_MAX) == 0)
+#else
+      if (getcwd (current_directory, GET_PATH_MAX) == 0)
+#endif
+        {
+#ifdef  HAVE_GETCWD
+          perror_with_name ("getcwd", "");
+#else
+          OS (error, NILF, "getwd: %s", current_directory);
+#endif
+          starting_directory = 0;
+        }
+      else
+        starting_directory = current_directory;
+    }
+
+  define_variable_cname ("CURDIR", current_directory, o_file, 0);
 
   /* Validate the arg_job_slots configuration before we define MAKEFLAGS so
      users get an accurate value in their makefiles.
@@ -1686,80 +1759,6 @@ main (int argc, char **argv, char **envp)
       vms_export_dcl_symbol ("MAKEOVERRIDES", "${-*-command-variables-*-}");
 #endif
     }
-
-  /* If there were -C flags, move ourselves about.  */
-  if (directories != 0)
-    {
-      unsigned int i;
-      for (i = 0; directories->list[i] != 0; ++i)
-        {
-          const char *dir = directories->list[i];
-#ifdef WINDOWS32
-          /* WINDOWS32 chdir() doesn't work if the directory has a trailing '/'
-             But allow -C/ just in case someone wants that.  */
-          {
-            char *p = (char *)dir + strlen (dir) - 1;
-            while (p > dir && (p[0] == '/' || p[0] == '\\'))
-              --p;
-            p[1] = '\0';
-          }
-#endif
-          if (chdir (dir) < 0)
-            pfatal_with_name (dir);
-        }
-    }
-
-#ifdef WINDOWS32
-  /*
-   * THIS BLOCK OF CODE MUST COME AFTER chdir() CALL ABOVE IN ORDER
-   * TO NOT CONFUSE THE DEPENDENCY CHECKING CODE IN implicit.c.
-   *
-   * The functions in dir.c can incorrectly cache information for "."
-   * before we have changed directory and this can cause file
-   * lookups to fail because the current directory (.) was pointing
-   * at the wrong place when it was first evaluated.
-   */
-   no_default_sh_exe = !find_and_set_default_shell (NULL);
-#endif /* WINDOWS32 */
-
-  /* Except under -s, always do -w in sub-makes and under -C.  */
-  if (!silent_flag && (directories != 0 || makelevel > 0))
-    print_directory_flag = 1;
-
-  /* Let the user disable that with --no-print-directory.  */
-  if (inhibit_print_directory_flag)
-    print_directory_flag = 0;
-
-  /* If -R was given, set -r too (doesn't make sense otherwise!)  */
-  if (no_builtin_variables_flag)
-    no_builtin_rules_flag = 1;
-
-  /* Construct the list of include directories to search.  */
-
-  construct_include_path (include_directories == 0
-                          ? 0 : include_directories->list);
-
-  /* If we chdir'ed, figure out where we are now.  */
-  if (directories)
-    {
-#ifdef WINDOWS32
-      if (getcwd_fs (current_directory, GET_PATH_MAX) == 0)
-#else
-      if (getcwd (current_directory, GET_PATH_MAX) == 0)
-#endif
-        {
-#ifdef  HAVE_GETCWD
-          perror_with_name ("getcwd", "");
-#else
-          OS (error, NILF, "getwd: %s", current_directory);
-#endif
-          starting_directory = 0;
-        }
-      else
-        starting_directory = current_directory;
-    }
-
-  define_variable_cname ("CURDIR", current_directory, o_file, 0);
 
   /* Read any stdin makefiles into temporary files.  */
 
@@ -2134,9 +2133,9 @@ main (int argc, char **argv, char **envp)
 
   install_default_implicit_rules ();
 
-  /* Compute implicit rule limits.  */
+  /* Compute implicit rule limits and do magic for pattern rules.  */
 
-  count_implicit_rule_limits ();
+  snap_implicit_rules ();
 
   /* Construct the listings of directories in VPATH lists.  */
 
@@ -3370,7 +3369,7 @@ print_version (void)
      year, and none of the rest of it should be translated (including the
      word "Copyright"), so it hardly seems worth it.  */
 
-  printf ("%sCopyright (C) 1988-2019 Free Software Foundation, Inc.\n",
+  printf ("%sCopyright (C) 1988-2020 Free Software Foundation, Inc.\n",
           precede);
 
   printf (_("%sLicense GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>\n\

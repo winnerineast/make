@@ -1,5 +1,5 @@
 /* Job execution and handling for GNU Make.
-Copyright (C) 1988-2019 Free Software Foundation, Inc.
+Copyright (C) 1988-2020 Free Software Foundation, Inc.
 This file is part of GNU Make.
 
 GNU Make is free software; you can redistribute it and/or modify it under the
@@ -2381,6 +2381,18 @@ child_execute_job (struct childbase *child, int good_stdin, char **argv)
           break;
         }
 
+    /* execvp() will use a default PATH if none is set; emulate that.  */
+    if (p == NULL)
+      {
+        size_t l = confstr (_CS_PATH, NULL, 0);
+        if (l)
+          {
+            char *dp = alloca (l);
+            confstr (_CS_PATH, dp, l);
+            p = dp;
+          }
+      }
+
     cmd = (char *)find_in_given_path (argv[0], p, 0);
   }
 
@@ -2754,7 +2766,7 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
   /* We used to have a double quote (") in sh_chars_dos[] below, but
      that caused any command line with quoted file names be run
      through a temporary batch file, which introduces command-line
-     limit of 4K charcaters imposed by cmd.exe.  Since CreateProcess
+     limit of 4K characters imposed by cmd.exe.  Since CreateProcess
      can handle quoted file names just fine, removing the quote lifts
      the limit from a very frequent use case, because using quoted
      file names is commonplace on MS-Windows.  */
@@ -2785,9 +2797,10 @@ construct_command_argv_internal (char *line, char **restp, const char *shell,
 #else  /* must be UNIX-ish */
   static const char *sh_chars = "#;\"*?[]&|<>(){}$`^~!";
   static const char *sh_cmds[] =
-    { ".", ":", "break", "case", "cd", "command", "continue", "eval", "exec",
-      "exit", "export", "for", "if", "login", "logout", "read", "readonly",
-      "set", "shift", "switch", "test", "times", "trap", "ulimit", "umask",
+    { ".", ":", "alias", "bg", "break", "case", "cd", "command", "continue",
+      "eval", "exec", "exit", "export", "fc", "fg", "for", "getopts", "hash",
+      "if", "jobs", "login", "logout", "read", "readonly", "return", "set",
+      "shift", "test", "times", "trap", "type", "ulimit", "umask", "unalias",
       "unset", "wait", "while", 0 };
 
 # ifdef HAVE_DOS_PATHS
