@@ -322,6 +322,12 @@ struct variable shell_var;
 
 char cmd_prefix = '\t';
 
+/* Count the number of commands we've invoked, that might change something in
+   the filesystem.  Start with 1 so calloc'd memory never matches.  */
+
+unsigned long command_count = 1;
+
+
 
 /* The usage output.  We write it this way to make life easier for the
    translators, especially those trying to translate to right-to-left
@@ -406,6 +412,10 @@ static const char *const usage[] =
   --warn-undefined-variables  Warn when an undefined variable is referenced.\n"),
     NULL
   };
+
+/* Nonzero if the "--trace" option was given.  */
+
+static int trace_flag = 0;
 
 /* The table of command switches.
    Order matters here: this is the order MAKEFLAGS will be constructed.
@@ -546,10 +556,6 @@ int one_shell;
    of each job stay together.  */
 
 int output_sync = OUTPUT_SYNC_NONE;
-
-/* Nonzero if the "--trace" option was given.  */
-
-int trace_flag = 0;
 
 /* Nonzero if we have seen the '.NOTPARALLEL' target.
    This turns off parallel builds for this invocation of make.  */
@@ -718,6 +724,9 @@ decode_debug_flags (void)
   if (debug_flag)
     db_level = DB_ALL;
 
+  if (trace_flag)
+    db_level = DB_PRINT | DB_WHY;
+
   if (db_flags)
     for (pp=db_flags->list; *pp; ++pp)
       {
@@ -745,8 +754,14 @@ decode_debug_flags (void)
               case 'n':
                 db_level = 0;
                 break;
+              case 'p':
+                db_level |= DB_PRINT;
+                break;
               case 'v':
                 db_level |= DB_BASIC | DB_VERBOSE;
+                break;
+              case 'w':
+                db_level |= DB_WHY;
                 break;
               default:
                 OS (fatal, NILF,
@@ -1358,7 +1373,7 @@ main (int argc, char **argv, char **envp)
         enum variable_export export = v_export;
         size_t len;
 
-        while (! STOP_SET (*ep, MAP_EQUALS))
+        while (! STOP_SET (*ep, MAP_EQUALS|MAP_NUL))
           ++ep;
 
         /* If there's no equals sign it's a malformed environment.  Ignore.  */
@@ -2188,11 +2203,20 @@ main (int argc, char **argv, char **envp)
 
       DB (DB_BASIC, (_("Updating makefiles....\n")));
 
+      /* Count the makefiles, and reverse the order so that we attempt to
+         rebuild them in the order they were read.  */
       {
-        struct goaldep *d;
         unsigned int num_mkfiles = 0;
-        for (d = read_files; d != NULL; d = d->next)
-          ++num_mkfiles;
+        struct goaldep *d = read_files;
+        read_files = NULL;
+        while (d != NULL)
+          {
+            struct goaldep *t = d;
+            d = d->next;
+            t->next = read_files;
+            read_files = t;
+            ++num_mkfiles;
+          }
 
         makefile_mtimes = alloca (num_mkfiles * sizeof (FILE_TIMESTAMP));
       }

@@ -41,6 +41,21 @@ char *alloca ();
 # endif
 #endif
 
+/* Some versions of GCC (e.g., 10.x) set the warn_unused_result attribute on
+   __builtin_alloca.  This causes alloca(0) to fail and is not easily worked
+   around so avoid it via the preprocessor.
+   See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=98055  */
+
+#if defined (__has_builtin)
+# if __has_builtin (__builtin_alloca)
+#   define free_alloca()
+# else
+#  define free_alloca() alloca (0)
+# endif
+#else
+# define free_alloca() alloca (0)
+#endif
+
 /* Disable assert() unless we're a maintainer.
    Some asserts are compute-intensive.  */
 #ifndef MAKE_MAINTAINER_MODE
@@ -115,7 +130,7 @@ extern int errno;
 #endif
 
 /* Some systems define _POSIX_VERSION but are not really POSIX.1.  */
-#if (defined (butterfly) || defined (__arm) || (defined (__mips) && defined (_SYSTYPE_SVR3)) || (defined (sequent) && defined (i386)))
+#if (defined (butterfly) || (defined (__mips) && defined (_SYSTYPE_SVR3)) || (defined (sequent) && defined (i386)))
 # undef POSIX
 #endif
 
@@ -671,9 +686,10 @@ extern int just_print_flag, run_silent, ignore_errors_flag, keep_going_flag;
 extern int print_data_base_flag, question_flag, touch_flag, always_make_flag;
 extern int env_overrides, no_builtin_rules_flag, no_builtin_variables_flag;
 extern int print_version_flag, print_directory, check_symlink_flag;
-extern int warn_undefined_variables_flag, trace_flag, posix_pedantic;
+extern int warn_undefined_variables_flag, posix_pedantic;
 extern int not_parallel, second_expansion, clock_skew_detected;
 extern int rebuilding_makefiles, one_shell, output_sync, verify_flag;
+extern unsigned long command_count;
 
 extern const char *default_shell;
 

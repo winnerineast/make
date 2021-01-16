@@ -63,9 +63,9 @@ struct vmodifiers
     unsigned int assign_v:1;
     unsigned int define_v:1;
     unsigned int undefine_v:1;
-    unsigned int export_v:1;
     unsigned int override_v:1;
     unsigned int private_v:1;
+    enum variable_export export_v ENUM_BITFIELD (2);
   };
 
 /* Types of "words" that can be read in a makefile.  */
@@ -142,6 +142,7 @@ static void do_undefine (char *name, enum variable_origin origin,
 static struct variable *do_define (char *name, enum variable_origin origin,
                                    struct ebuffer *ebuf);
 static int conditional_line (char *line, size_t len, const floc *flocp);
+static void check_specials (const struct nameseq *file, int set_default);
 static void record_files (struct nameseq *filenames, int are_also_makes,
                           const char *pattern,
                           const char *pattern_percent, char *depstr,
@@ -263,10 +264,6 @@ read_all_makefiles (const char **makefiles)
         {
           /* No default makefile was found.  Add the default makefiles to the
              'read_files' chain so they will be updated if possible.  */
-          struct goaldep *tail = read_files;
-          /* Add them to the tail, after any MAKEFILES variable makefiles.  */
-          while (tail != 0 && tail->next != 0)
-            tail = tail->next;
           for (p = default_makefiles; *p != 0; ++p)
             {
               struct goaldep *d = alloc_goaldep ();
@@ -274,14 +271,9 @@ read_all_makefiles (const char **makefiles)
               /* Tell update_goal_chain to bail out as soon as this file is
                  made, and main not to die if we can't make this file.  */
               d->flags = RM_DONTCARE;
-              if (tail == 0)
-                read_files = d;
-              else
-                tail->next = d;
-              tail = d;
+              d->next = read_files;
+              read_files = d;
             }
-          if (tail != 0)
-            tail->next = 0;
         }
     }
 
@@ -418,6 +410,11 @@ eval_makefile (const char *filename, unsigned short flags)
   /* Success; clear errno.  */
   deps->error = 0;
 
+  /* If we tried and failed to read the included file before but this
+     time we succeeded, reset the last mtime.  */
+  if (deps->file->last_mtime == NONEXISTENT_MTIME)
+    deps->file->last_mtime = 0;
+
   /* Avoid leaking the makefile to children.  */
   fd_noinherit (fileno (ebuf.fp));
 
@@ -440,7 +437,7 @@ eval_makefile (const char *filename, unsigned short flags)
   fclose (ebuf.fp);
 
   free (ebuf.bufstart);
-  alloca (0);
+  free_alloca ();
 
   errno = 0;
   return deps;
@@ -482,7 +479,7 @@ eval_buffer (char *buffer, const floc *flocp)
 
   reading_file = curfile;
 
-  alloca (0);
+  free_alloca ();
 }
 
 /* Check LINE to see if it's a variable assignment or undefine.
@@ -525,7 +522,9 @@ parse_var_assignment (const char *line, struct vmodifiers *vmod)
       wlen = p2 - p;
 
       if (word1eq ("export"))
-        vmod->export_v = 1;
+        vmod->export_v = v_export;
+      else if (word1eq ("unexport"))
+        vmod->export_v = v_noexport;
       else if (word1eq ("override"))
         vmod->override_v = 1;
       else if (word1eq ("private"))
@@ -751,8 +750,8 @@ eval (struct ebuffer *ebuf, int set_default)
 
           assert (v != NULL);
 
-          if (vmod.export_v)
-            v->export = v_export;
+          if (vmod.export_v != v_default)
+            v->export = vmod.export_v;
           if (vmod.private_v)
             v->private_var = 1;
 
@@ -1322,79 +1321,7 @@ eval (struct ebuffer *ebuf, int set_default)
             commands[commands_idx++] = '\n';
           }
 
-        /* Determine if this target should be made default. We used to do
-           this in record_files() but because of the delayed target recording
-           and because preprocessor directives are legal in target's commands
-           it is too late. Consider this fragment for example:
-
-           foo:
-
-           ifeq ($(.DEFAULT_GOAL),foo)
-              ...
-           endif
-
-           Because the target is not recorded until after ifeq directive is
-           evaluated the .DEFAULT_GOAL does not contain foo yet as one
-           would expect. Because of this we have to move the logic here.  */
-
-        if (set_default && default_goal_var->value[0] == '\0')
-          {
-            struct dep *d;
-            struct nameseq *t = filenames;
-
-            for (; t != 0; t = t->next)
-              {
-                int reject = 0;
-                const char *name = t->name;
-
-                /* We have nothing to do if this is an implicit rule. */
-                if (strchr (name, '%') != 0)
-                  break;
-
-                /* See if this target's name does not start with a '.',
-                   unless it contains a slash.  */
-                if (*name == '.' && strchr (name, '/') == 0
-#ifdef HAVE_DOS_PATHS
-                    && strchr (name, '\\') == 0
-#endif
-                    )
-                  continue;
-
-
-                /* If this file is a suffix, don't let it be
-                   the default goal file.  */
-                for (d = suffix_file->deps; d != 0; d = d->next)
-                  {
-                    struct dep *d2;
-                    if (*dep_name (d) != '.' && streq (name, dep_name (d)))
-                      {
-                        reject = 1;
-                        break;
-                      }
-                    for (d2 = suffix_file->deps; d2 != 0; d2 = d2->next)
-                      {
-                        size_t l = strlen (dep_name (d2));
-                        if (!strneq (name, dep_name (d2), l))
-                          continue;
-                        if (streq (name + l, dep_name (d)))
-                          {
-                            reject = 1;
-                            break;
-                          }
-                      }
-
-                    if (reject)
-                      break;
-                  }
-
-                if (!reject)
-                  {
-                    define_variable_global (".DEFAULT_GOAL", 13, t->name,
-                                            o_file, 0, NILF);
-                    break;
-                  }
-              }
-          }
+        check_specials (filenames, set_default);
       }
     }
 
@@ -1912,7 +1839,8 @@ record_target_var (struct nameseq *filenames, char *defn,
       /* Set up the variable to be *-specific.  */
       v->per_target = 1;
       v->private_var = vmod->private_v;
-      v->export = vmod->export_v ? v_export : v_default;
+      if (vmod->export_v != v_default)
+        v->export = vmod->export_v;
 
       /* If it's not an override, check to see if there was a command-line
          setting.  If so, reset the value.  */
@@ -1931,6 +1859,106 @@ record_target_var (struct nameseq *filenames, char *defn,
               v->recursive = gv->recursive;
               v->append = 0;
             }
+        }
+    }
+}
+
+
+/* Check for special targets.  We used to do this in record_files() but that's
+   too late: by the time we get there we'll have already parsed the next line
+   and it have been mis-parsed because these special targets haven't been
+   considered yet.  */
+
+static void check_specials (const struct nameseq* files, int set_default)
+{
+  const struct nameseq *t = files;
+
+  /* Unlikely but ...  */
+  if (posix_pedantic && second_expansion && one_shell
+      && (!set_default || default_goal_var->value[0] == '\0'))
+    return;
+
+  for (; t != 0; t = t->next)
+    {
+      const char* nm = t->name;
+
+      if (!posix_pedantic && streq (nm, ".POSIX"))
+        {
+          posix_pedantic = 1;
+          define_variable_cname (".SHELLFLAGS", "-ec", o_default, 0);
+          /* These default values are based on IEEE Std 1003.1-2008.
+             It requires '-O 1' for [CF]FLAGS, but GCC doesn't allow
+             space between -O and the number so omit it here.  */
+          define_variable_cname ("CC", "c99", o_default, 0);
+          define_variable_cname ("CFLAGS", "-O1", o_default, 0);
+          define_variable_cname ("FC", "fort77", o_default, 0);
+          define_variable_cname ("FFLAGS", "-O1", o_default, 0);
+          define_variable_cname ("SCCSGETFLAGS", "-s", o_default, 0);
+          continue;
+        }
+
+      if (!second_expansion && streq (nm, ".SECONDEXPANSION"))
+        {
+          second_expansion = 1;
+          continue;
+        }
+
+#if !defined (__MSDOS__) && !defined (__EMX__)
+      if (!one_shell && streq (nm, ".ONESHELL"))
+        {
+          one_shell = 1;
+          continue;
+        }
+#endif
+
+      /* Determine if this target should be made default.  */
+
+      if (set_default && default_goal_var->value[0] == '\0')
+        {
+          struct dep *d;
+          int reject = 0;
+
+          /* We have nothing to do if this is an implicit rule. */
+          if (strchr (nm, '%') != 0)
+            break;
+
+          /* See if this target's name does not start with a '.',
+             unless it contains a slash.  */
+          if (*nm == '.' && strchr (nm, '/') == 0
+#ifdef HAVE_DOS_PATHS
+              && strchr (nm, '\\') == 0
+#endif
+              )
+            continue;
+
+          /* If this file is a suffix, it can't be the default goal file.  */
+          for (d = suffix_file->deps; d != 0; d = d->next)
+            {
+              struct dep *d2;
+              if (*dep_name (d) != '.' && streq (nm, dep_name (d)))
+                {
+                  reject = 1;
+                  break;
+                }
+              for (d2 = suffix_file->deps; d2 != 0; d2 = d2->next)
+                {
+                  size_t l = strlen (dep_name (d2));
+                  if (!strneq (nm, dep_name (d2), l))
+                    continue;
+                  if (streq (nm + l, dep_name (d)))
+                    {
+                      reject = 1;
+                      break;
+                    }
+                }
+
+              if (reject)
+                break;
+            }
+
+          if (!reject)
+            define_variable_global (".DEFAULT_GOAL", 13, t->name,
+                                    o_file, 0, NILF);
         }
     }
 }
@@ -2075,29 +2103,6 @@ record_files (struct nameseq *filenames, int are_also_makes,
       struct dep *this = 0;
 
       free_ns (filenames);
-
-      /* Check for special targets.  Do it here instead of, say, snap_deps()
-         so that we can immediately use the value.  */
-      if (!posix_pedantic && streq (name, ".POSIX"))
-        {
-          posix_pedantic = 1;
-          define_variable_cname (".SHELLFLAGS", "-ec", o_default, 0);
-          /* These default values are based on IEEE Std 1003.1-2008.
-             It requires '-O 1' for [CF]FLAGS, but GCC doesn't allow space
-             between -O and the number so omit it here.  */
-          define_variable_cname ("ARFLAGS", "-rv", o_default, 0);
-          define_variable_cname ("CC", "c99", o_default, 0);
-          define_variable_cname ("CFLAGS", "-O1", o_default, 0);
-          define_variable_cname ("FC", "fort77", o_default, 0);
-          define_variable_cname ("FFLAGS", "-O1", o_default, 0);
-          define_variable_cname ("SCCSGETFLAGS", "-s", o_default, 0);
-        }
-      else if (!second_expansion && streq (name, ".SECONDEXPANSION"))
-        second_expansion = 1;
-#if !defined (__MSDOS__) && !defined (__EMX__)
-      else if (!one_shell && streq (name, ".ONESHELL"))
-        one_shell = 1;
-#endif
 
       /* If this is a static pattern rule:
          'targets: target%pattern: prereq%pattern; recipe',

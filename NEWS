@@ -17,9 +17,48 @@ https://sv.gnu.org/bugs/index.php?group=make&report_id=111&fix_release_id=109&se
 
 * WARNING: Backward-incompatibility!
   Previously if --no-print-directory was seen anywhere in the environment or
-  command line it would take precedence over --print-directory.  Now, the
+  command line it would take precedence over any --print-directory.  Now, the
   last setting of directory printing options seen will be used, so a command
   line such as "--no-print-directory -w" _will_ show directory entry/exits.
+
+* WARNING: Backward-incompatibility!
+  Previously the order in which makefiles were remade was not explicitly
+  stated, but it was (roughly) the inverse of the order in which they were
+  processed by make.  In this release, the order in which makefiles are
+  rebuilt is the same order in which make processed them, and this is defined
+  to be true in the GNU make manual.
+
+* WARNING: New build requirement
+  GNU make utilizes facilities from GNU Gnulib: Gnulib requires certain C99
+  features in the C compiler and so these features are required by GNU make:
+  https://www.gnu.org/software/gnulib/manual/html_node/C99-features-assumed.html
+  The configure script should verify the compiler has these features.
+
+* New feature: The $(let ...) function
+  This function allows user-defined functions to provide a lexically-scoped
+  set of variables: values can be assigned to these variables from within the
+  user-defined function and they will not impact global variable assignments.
+  Implementation provided by Jouke Witteveen <j.witteveen@gmail.com>
+
+* New debug option "print" will show the recipe to be run, even when silent
+  mode is set.
+
+* New debug option "why" will show why a target is rebuilt (which
+  prerequisites caused the target to be considered out of date).
+
+* The existing --trace option is made equivalent to --debug=print,why
+
+* Target-specific variables can now be marked "unexport".
+
+* Exporting / unexporting target-specific variables is handled correctly, so
+  that the attribute of the most specific variable setting is used.
+
+* Special targets like .POSIX are detected upon definition, ensuring that any
+  change in behavior takes effect immediately, before the next line is parsed.
+
+* A long-standing issue with the directory cache has been resolved: changes
+  made as a side-effect of some other target's recipe are now noticed as
+  expected.
 
 * GNU Make can now be built for MS-Windows using the Tiny C tcc compiler.
 
@@ -53,10 +92,9 @@ https://sv.gnu.org/bugs/index.php?group=make&report_id=111&fix_release_id=108&se
 * WARNING: Backward-incompatibility!
   Previously using the .SILENT pseudo-target in a makefile would force all
   sub-makes to be invoked with the '-s' option, effectively making all
-  sub-makes silent as well.  In this release, .SILENT only has effect for the
-  current invocation of make.  As a side-effect of this, .SILENT no longer has
-  a side-effect of enabling the --no-print-directory option, which using -s
-  will do.
+  sub-makes silent as well.  In this release .SILENT only affects the current
+  invocation of make.  A side-effect of this is that .SILENT will no longer
+  enable the --no-print-directory option, which using -s will do.
 
 * NOTE: Deprecated behavior.
   Contrary to the documentation, suffix rules with prerequisites are being
